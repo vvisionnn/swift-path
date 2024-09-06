@@ -1,0 +1,83 @@
+name: CI
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "**/*.swift"
+      - .github/workflows/ci.yml
+  schedule:
+    - cron: "3 3 * * 5" # 3:03 AM, every Friday
+
+concurrency:
+  group: ${{ github.head_ref || 'push' }}
+  cancel-in-progress: true
+
+jobs:
+  verify-linuxmain:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v2
+      - run: swift test --generate-linuxmain
+      - run: git diff --exit-code
+
+  apple:
+    strategy:
+      matrix:
+        os:
+          - macos-14
+          - macos-latest
+        platform:
+          - platform=iOS Simulator,name=iPhone 15 Pro
+          - platform=macOS
+          - platform=tvOS Simulator,name=Apple TV
+          - platform=watchOS Simulator,name=Apple Watch Series 8 (45mm)
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v2
+      - name: Install Dependencies
+        run: |
+          brew install mise
+          mise install
+          mise use --global xcbeautify
+      - run: xcodebuild test -scheme Path -destination "${{ matrix.platform }}" -enableCodeCoverage YES | xcbeautify
+      - uses: codecov/codecov-action@v1
+
+  linux:
+    strategy:
+      matrix:
+        swift:
+          - swift:5.10
+    runs-on: ubuntu-latest
+    container:
+      image: ${{ matrix.swift }}
+    steps:
+      - uses: mxcl/get-swift-version@v1
+        id: swift
+
+      - uses: actions/checkout@v2
+
+      - run: useradd -ms /bin/bash mxcl
+      - run: chown -R mxcl .
+      # ^^ we need to be a normal user and not root for the tests to be valid
+
+      - run: echo ARGS=--enable-code-coverage >> $GITHUB_ENV
+        if: ${{ steps.swift.outputs.marketing-version > 5 }}
+
+      - run: su mxcl -c "swift test --parallel $ARGS"
+
+      - name: Generate `.lcov`
+        if: ${{ steps.swift.outputs.marketing-version > 5 }}
+        run: |
+          apt-get -qq update && apt-get -qq install curl
+          b=$(swift build --show-bin-path)
+          llvm-cov export \
+            -format lcov \
+            -instr-profile="$b"/codecov/default.profdata \
+            --ignore-filename-regex='\.build|Tests' \
+            "$b"/*.xctest \
+            > info.lcov
+
+      - uses: codecov/codecov-action@v1
+        if: ${{ steps.swift.outputs.marketing-version > 5 }}
+        with:
+          file: ./info.lcov
