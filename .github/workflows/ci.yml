@@ -13,13 +13,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  verify-linuxmain:
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v2
-      - run: swift test --generate-linuxmain
-      - run: git diff --exit-code
-
   apple:
     strategy:
       matrix:
